@@ -55,9 +55,9 @@ def get_category(name: str) -> str:
         "Мясо и птица": ["мясо", "курица", "индейка", "говядина", "свинина", "фарш", "субпродукты"],
         "Рыба и морепродукты": ["рыба", "лосось", "треска", "креветки", "морепродукты"],
         "Молочные продукты": ["молоко", "творог", "сыр", "йогурт", "сметана", "сливки"],
-        "Овощи и зелень": ["огурец", "огурцы", "помидор", "помидоры", "зелень", "укроп", "петрушка", "салат"],
-        "Фрукты и ягоды": ["яблоко", "банан", "ягода", "клубника", "малина", "черника", "ягоды"],
-        "Бакалея": ["крупа", "рис", "гречка", "макароны", "мука", "сахар", "соль", "масло", "овсянка", "вода"],
+        "Овощи и зелень": ["огурец", "огурцы", "помидор", "помидоры", "зелень", "укроп", "петрушка", "салат", "картофель", "морковь", "грибы", "кабачки", "капуста", "лук", "чеснок"],
+        "Фрукты и ягоды": ["яблоко", "банан", "ягода", "клубника", "малина", "черника", "ягоды", "лимон"],
+        "Бакалея": ["крупа", "рис", "гречка", "макароны", "мука", "сахар", "соль", "масло", "овсянка", "вода", "хлеб", "чечевица"],
         "Соусы": ["майонез", "маргарин"]
     }
     for cat, keywords in categories.items():
@@ -93,6 +93,26 @@ def calculate_kbzhu(gender: str, weight: float, height: float, age: int, activit
     fats = int((calories * 0.3) / 9)
     carbs = int((calories * 0.4) / 4)
     return calories, proteins, fats, carbs
+
+# Вспомогательная функция для расчета статуса ингредиентов и смайлика
+def get_match_status(recipe_ingredients, user_inv_names):
+    if not recipe_ingredients:
+        return "🟢", 100, 0
+    
+    matches = sum(1 for ing in recipe_ingredients if ing in user_inv_names)
+    total = len(recipe_ingredients)
+    pct = int((matches / total) * 100)
+    
+    if pct == 100:
+        emoji = "🟢"
+    elif pct >= 75:
+        emoji = "🟡"
+    elif pct >= 50:
+        emoji = "🟠"
+    else:
+        emoji = "🔴"
+        
+    return emoji, pct, matches
 
 # --- СТАРТ И НАСТРОЙКА КБЖУ / БЮДЖЕТА ---
 
@@ -503,25 +523,30 @@ async def list_recipes(callback: types.CallbackQuery):
         cost = calculate_recipe_cost(r["id"], user_store)
         meal_budget_limit = user_budget / 3.0
         budget_status = "✅ В бюджете" if cost <= meal_budget_limit else "⚠️ Выше лимита"
-        matches = sum(1 for ing in r["ingredients"] if ing in user_inv_names)
-        matched.append((r, matches, cost, budget_status))
+        
+        # Получаем маркер, процент готовности и количество совпадений
+        emoji, pct, matches = get_match_status(r["ingredients"], user_inv_names)
+        matched.append((r, matches, pct, emoji, cost, budget_status))
         
     if not matched:
         await callback.message.answer("Подходящих рецептов не найдено.")
         await callback.answer()
         return
         
-    matched.sort(key=lambda x: x[1], reverse=True)
+    # Сортируем: сначала по проценту совпадения (по убыванию), затем по цене (по возрастанию)
+    matched.sort(key=lambda x: (x[2], -x[4]), reverse=True)
+    
     builder = InlineKeyboardBuilder()
-    for r, matches, cost, budget_status in matched:
+    for r, matches, pct, emoji, cost, budget_status in matched:
         builder.button(
-            text=f"{r['name']} ({cost}₽ | {matches}/{len(r['ingredients'])} совп.)",
+            text=f"{emoji} {r['name']} ({cost}₽ | {pct}%)",
             callback_data=f"recipe_{r['id']}"
         )
     builder.adjust(1)
     
     await callback.message.edit_text(
-        f"Рецепты для категории *{rtype.capitalize()}* (Магазин: {user_store.capitalize()}):",
+        f"Рецепты для категории *{rtype.capitalize()}* (Магазин: {user_store.capitalize()}):\n"
+        f"🟢 100% ингредиентов | 🟡 75%+ | 🟠 50%+ | 🔴 Менее 50%",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
@@ -710,7 +735,6 @@ async def trigger_test_month(message: types.Message):
     )
 
 async def main():
-    # Проверка сроков годности каждый день в 10:00 утра
     scheduler.add_job(check_expiration_dates, "cron", hour=10, minute=0)
     scheduler.add_job(send_monthly_reminder, "cron", day=1, hour=9, minute=0)
     scheduler.start()
